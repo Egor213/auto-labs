@@ -15,6 +15,7 @@ from pathlib import Path
 
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from .formula import add_latex_formula
 
 from .inline import add_inline, set_run_font, typo
 
@@ -253,11 +254,19 @@ def add_table(doc, table_lines, caption=None):
 # ---------------------------------------------------------------------
 #  Формула
 # ---------------------------------------------------------------------
-def add_formula(doc, formula):
+def add_formula(doc, formula_text):
+    """Добавляет выключную формулу (по центру, отдельным абзацем)."""
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.first_line_indent = Cm(0)
     p.paragraph_format.line_spacing = 1.0
     p.paragraph_format.space_before = Pt(6)
     p.paragraph_format.space_after = Pt(6)
-    add_inline(p, formula)
+    
+    # Убираем $$, если они есть, и пробелы по краям
+    latex = formula_text.strip()
+    if latex.startswith('$$') and latex.endswith('$$'):
+        latex = latex[2:-2].strip()
+    
+    add_latex_formula(p, latex, inline=False)
+    return p

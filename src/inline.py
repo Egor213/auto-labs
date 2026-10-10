@@ -1,4 +1,4 @@
-"""Инлайн-разметка: bold, italic, code, ссылки, sub/sup.
+"""Инлайн-разметка: bold, italic, code, ссылки, sub/sup, типографика.
 
 Синтаксис:
     **bold**        -> жирный
@@ -8,6 +8,11 @@
     [text](url)     -> гиперссылка
     _{...}          -> нижний индекс
     ^{...}          -> верхний индекс
+
+Типографика:
+    --  ->  –   (en-dash, U+2013)
+    --- ->  —   (em-dash, U+2014)
+Применяется только к обычному тексту (не к коду и не к URL).
 """
 import re
 
@@ -26,6 +31,15 @@ _TOKENS = re.compile(
     r"|_\{[^}\n]+\}"
     r")"
 )
+
+
+def typo(text):
+    """Типографские замены: `---` -> `—`, `--` -> `–`."""
+    if not text:
+        return text
+    text = text.replace("---", "\u2014")
+    text = text.replace("--", "\u2013")
+    return text
 
 
 def set_run_font(run, name="Times New Roman", size=14, bold=None, italic=None):
@@ -93,18 +107,23 @@ def _emit_sub(paragraph, text):
 
 
 def add_inline(paragraph, text):
-    """Разбирает инлайн-разметку и добавляет runs в абзац."""
+    """Разбирает инлайн-разметку и добавляет runs в абзац.
+
+    Типографика (-- -> –) применяется к простому тексту, содержимому
+    bold/italic и подписям ссылок; код и URL не трогаются.
+    """
     for part in _TOKENS.split(text):
         if not part:
             continue
 
         if part.startswith("**") and part.endswith("**") and len(part) > 4:
-            _emit(paragraph, part[2:-2], bold=True)
+            _emit(paragraph, typo(part[2:-2]), bold=True)
         elif part.startswith("__") and part.endswith("__") and len(part) > 4:
-            _emit(paragraph, part[2:-2], bold=True)
+            _emit(paragraph, typo(part[2:-2]), bold=True)
         elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-            _emit(paragraph, part[1:-1], italic=True)
+            _emit(paragraph, typo(part[1:-1]), italic=True)
         elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+            # код -- без типографики
             _emit(paragraph, part[1:-1], name="Courier New", size=12)
         elif part.startswith("^{") and part.endswith("}"):
             _emit_sup(paragraph, part[2:-1])
@@ -113,6 +132,6 @@ def add_inline(paragraph, text):
         else:
             m = re.match(r"^\[([^\]]+)\]\(([^)]+)\)$", part)
             if m:
-                add_hyperlink(paragraph, m.group(2), m.group(1))
+                add_hyperlink(paragraph, m.group(2), typo(m.group(1)))
             else:
-                _emit(paragraph, part)
+                _emit(paragraph, typo(part))

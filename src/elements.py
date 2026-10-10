@@ -4,6 +4,11 @@
 требуемый стиль отсутствует в документе (актуально при работе
 с пользовательским .docx-титульником): в этом случае используется
 обычный абзац + ручное форматирование run'а.
+
+Списки рисуются вручную (без опоры на стили List Bullet / List
+Number): в шаблонах Word для этих стилей нужны дополнительные
+определения numbering.xml, которых у пользовательских шаблонов
+может не быть.
 """
 import re
 from pathlib import Path
@@ -11,7 +16,7 @@ from pathlib import Path
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-from .inline import add_inline, set_run_font
+from .inline import add_inline, set_run_font, typo
 
 try:
     from PIL import Image
@@ -43,9 +48,9 @@ def add_heading(doc, text, level):
 
     # Если стиль отсутствовал -- хоть как-то отформатируем вручную.
     if p.style is None or p.style.name != style_name:
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 \
-            else WD_ALIGN_PARAGRAPH.JUSTIFY
-        run = p.add_run(text)
+        p.alignment = (WD_ALIGN_PARAGRAPH.CENTER if level == 1
+                       else WD_ALIGN_PARAGRAPH.JUSTIFY)
+        run = p.add_run(typo(text))
         set_run_font(run, size=14, bold=True)
         return p
 
@@ -69,12 +74,24 @@ def add_paragraph(doc, text):
     return p
 
 
-def add_list_item(doc, text, ordered=False):
-    style = "List Number" if ordered else "List Bullet"
-    p = _safe_paragraph(doc, style)
-    if p.style is None or p.style.name != style:
-        # Откат: рисуем маркер/номер вручную
-        prefix = "" if ordered else "\u2022 "
+def add_list_item(doc, text, prefix="\u2013 ", indent_cm=0.75,
+                  hanging_cm=0.5):
+    """Пункт списка без опоры на стиль.
+
+    prefix     -- что писать перед текстом ("– " или "1. " и т.п.);
+    indent_cm  -- левый отступ всего пункта;
+    hanging_cm -- насколько первая строка выступает влево (висячий отступ).
+    """
+    p = doc.add_paragraph()
+    pf = p.paragraph_format
+    pf.left_indent = Cm(indent_cm)
+    pf.first_line_indent = Cm(-hanging_cm)
+    pf.line_spacing = 1.5
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    if prefix:
         run = p.add_run(prefix)
         set_run_font(run, size=14)
     add_inline(p, text)
@@ -92,7 +109,7 @@ def add_caption_above(doc, caption, align=None):
     pf.line_spacing = 1.0
     pf.space_before = Pt(6)
     pf.space_after = Pt(3)
-    run = p.add_run(caption)
+    run = p.add_run(typo(caption))
     set_run_font(run, size=14)
     return p
 
@@ -105,7 +122,7 @@ def add_caption_below(doc, caption, align=None):
     pf.line_spacing = 1.0
     pf.space_before = Pt(3)
     pf.space_after = Pt(6)
-    run = p.add_run(caption)
+    run = p.add_run(typo(caption))
     set_run_font(run, size=14)
     return p
 
@@ -138,7 +155,6 @@ def add_image(doc, path, caption=""):
     path = Path(path)
     if not path.exists():
         print("[WARN] Изображение не найдено: {0}".format(path))
-        # Всё равно выводим подпись, чтобы номер не терялся.
         if caption:
             add_caption_below(doc, caption)
         return

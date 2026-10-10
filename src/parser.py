@@ -2,11 +2,13 @@
 
 Особенности:
     * блок подряд идущих непустых "обычных" строк склеивается в ОДИН
-      абзац Word, а переходы между строками становятся soft-break
-      (<w:br/>), то есть Shift+Enter в Word;
+      абзац Word; переносы между строками становятся soft-break
+      (<w:br/>, Shift+Enter в Word);
     * пустая строка = конец абзаца;
-    * спец. элементы (заголовки, листинги, таблицы, рисунки, списки,
-      формулы) разбираются построчно, как раньше.
+    * списки (маркированные/нумерованные) рисуются вручную,
+      нумерация ведётся счётчиком и не зависит от стилей Word;
+    * спец. элементы (заголовки, листинги, таблицы, рисунки, формулы)
+      разбираются построчно.
 """
 import re
 from pathlib import Path
@@ -20,8 +22,8 @@ _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _RE_IMG = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
 _RE_BULLET = re.compile(r"^[-*+]\s+(.*)$")
 _RE_ORDERED = re.compile(r"^\d+\.\s+(.*)$")
-_RE_TABLE_CAP = re.compile(r"^Таблица\s+\d+\s*-", re.IGNORECASE)
-_RE_LISTING_CAP = re.compile(r"^Листинг\s+\d+\s*-", re.IGNORECASE)
+_RE_TABLE_CAP = re.compile(r"^Таблица\s+\d+\s*[-]", re.IGNORECASE)
+_RE_LISTING_CAP = re.compile(r"^Листинг\s+\d+\s*[-]", re.IGNORECASE)
 _RE_TABLE_SEP = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$")
 
 
@@ -58,6 +60,7 @@ def process_body(doc, body, base_dir):
     lines = body.split("\n")
     n = len(lines)
     i = 0
+    ordered_index = 0  # счётчик для нумерованных списков
 
     while i < n:
         stripped = lines[i].strip()
@@ -66,6 +69,13 @@ def process_body(doc, body, base_dir):
         if not stripped:
             i += 1
             continue
+
+        # ---- типографический счётчик нумерованных списков -----------
+        m_ordered = _RE_ORDERED.match(stripped)
+        if m_ordered:
+            ordered_index += 1
+        else:
+            ordered_index = 0
 
         # ``` - блок кода / листинг
         if stripped.startswith("```"):
@@ -147,17 +157,17 @@ def process_body(doc, body, base_dir):
             i += 1
             continue
 
-        # - пункт
+        # - пункт (маркированный)
         m = _RE_BULLET.match(stripped)
         if m:
-            add_list_item(doc, m.group(1), ordered=False)
+            add_list_item(doc, m.group(1), prefix="\u2013 ")
             i += 1
             continue
 
-        # 1. пункт
-        m = _RE_ORDERED.match(stripped)
-        if m:
-            add_list_item(doc, m.group(1), ordered=True)
+        # 1. пункт (нумерованный) -- номер берём из счётчика
+        if m_ordered:
+            add_list_item(doc, m_ordered.group(1),
+                          prefix="{0}. ".format(ordered_index))
             i += 1
             continue
 

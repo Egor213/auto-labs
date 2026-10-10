@@ -75,14 +75,12 @@ def add_paragraph(doc, text):
     return p
 
 
+from .numbering import register_numbering, apply_numbering
+
+
 def add_list_item(doc, text, prefix="\u2013 ", indent_cm=0.75,
                   hanging_cm=0.5):
-    """Пункт списка без опоры на стиль.
-
-    prefix     -- что писать перед текстом ("– " или "1. " и т.п.);
-    indent_cm  -- левый отступ всего пункта;
-    hanging_cm -- насколько первая строка выступает влево (висячий отступ).
-    """
+    """Ручной пункт списка (fallback, если нумерация не зарегистрировалась)."""
     p = doc.add_paragraph()
     pf = p.paragraph_format
     pf.left_indent = Cm(indent_cm)
@@ -91,13 +89,42 @@ def add_list_item(doc, text, prefix="\u2013 ", indent_cm=0.75,
     pf.space_before = Pt(0)
     pf.space_after = Pt(0)
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-
     if prefix:
         run = p.add_run(prefix)
         set_run_font(run, size=14)
     add_inline(p, text)
     return p
 
+
+def add_list_block(doc, items, ordered):
+    """Добавляет блок списка с настоящей Word-нумерацией.
+
+    items  -- список строк без префикса;
+    ordered -- True для нумерованного, False для маркированного.
+
+    Один вызов = один экземпляр нумерации, поэтому следующий
+    нумерованный список автоматически начнётся с 1.
+    """
+    kind = "ordered" if ordered else "bullet"
+
+    try:
+        num_id = register_numbering(doc, kind)
+    except Exception as e:
+        print("[WARN] Не удалось зарегистрировать нумерацию: {0}".format(e))
+        for item in items:
+            prefix = "" if ordered else "\u2013 "
+            add_list_item(doc, item, prefix=prefix)
+        return
+
+    for item in items:
+        p = doc.add_paragraph()
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after = Pt(0)
+        pf.line_spacing = 1.5
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        apply_numbering(p, num_id, level=0)
+        add_inline(p, item)
 
 # ---------------------------------------------------------------------
 #  Подписи

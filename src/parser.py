@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .elements import (
     add_heading, add_paragraph_multiline, add_list_item, add_code_block,
-    add_image, add_table, add_formula,
+    add_image, add_table, add_formula, add_list_block
 )
 
 _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -159,9 +159,24 @@ def process_body(doc, body, base_dir):
 
         # - пункт (маркированный)
         m = _RE_BULLET.match(stripped)
-        if m:
-            add_list_item(doc, m.group(1), prefix="\u2013 ")
-            i += 1
+                # Списки -- собираем блок подряд идущих однотипных пунктов
+        # и применяем настоящую Word-нумерацию.
+        m_bullet = _RE_BULLET.match(stripped)
+        m_ordered = _RE_ORDERED.match(stripped)
+        if m_bullet or m_ordered:
+            ordered = bool(m_ordered)
+            matcher = _RE_ORDERED if ordered else _RE_BULLET
+            items = []
+            while i < n:
+                s = lines[i].strip()
+                if not s:
+                    break
+                mm = matcher.match(s)
+                if not mm:
+                    break
+                items.append(mm.group(1))
+                i += 1
+            add_list_block(doc, items, ordered)
             continue
 
         # 1. пункт (нумерованный) -- номер берём из счётчика

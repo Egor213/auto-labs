@@ -1,0 +1,247 @@
+"""Функции добавления элементов в документ.
+
+Все функции добавления параграфа защищены от ситуации, когда
+требуемый стиль отсутствует в документе (актуально при работе
+с пользовательским .docx-титульником): в этом случае используется
+обычный абзац + ручное форматирование run'а.
+"""
+import re
+from pathlib import Path
+
+from docx.shared import Pt, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+from .inline import add_inline, set_run_font
+
+try:
+    from PIL import Image
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
+
+# ---------------------------------------------------------------------
+#  Хелпер: абзац с заданным стилем и откатом на Normal
+# ---------------------------------------------------------------------
+def _safe_paragraph(doc, style_name):
+    """doc.add_paragraph(style=...) с откатом, если стиля нет."""
+    if style_name:
+        try:
+            return doc.add_paragraph(style=style_name)
+        except KeyError:
+            pass
+    return doc.add_paragraph()
+
+
+# ---------------------------------------------------------------------
+#  Заголовки, абзацы, списки
+# ---------------------------------------------------------------------
+def add_heading(doc, text, level):
+    level = max(1, min(level, 3))
+    style_name = "Heading {0}".format(level)
+    p = _safe_paragraph(doc, style_name)
+
+    # Если стиль отсутствовал -- хоть как-то отформатируем вручную.
+    if p.style is None or p.style.name != style_name:
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 \
+            else WD_ALIGN_PARAGRAPH.JUSTIFY
+        run = p.add_run(text)
+        set_run_font(run, size=14, bold=True)
+        return p
+
+    add_inline(p, text)
+    return p
+
+
+def add_paragraph_multiline(doc, lines):
+    """Один абзац, строки внутри разделены soft-break (<w:br/>)."""
+    p = doc.add_paragraph()
+    for idx, line in enumerate(lines):
+        if idx > 0:
+            p.add_run().add_break()
+        add_inline(p, line)
+    return p
+
+
+def add_paragraph(doc, text):
+    p = doc.add_paragraph()
+    add_inline(p, text)
+    return p
+
+
+def add_list_item(doc, text, ordered=False):
+    style = "List Number" if ordered else "List Bullet"
+    p = _safe_paragraph(doc, style)
+    if p.style is None or p.style.name != style:
+        # Откат: рисуем маркер/номер вручную
+        prefix = "" if ordered else "\u2022 "
+        run = p.add_run(prefix)
+        set_run_font(run, size=14)
+    add_inline(p, text)
+    return p
+
+
+# ---------------------------------------------------------------------
+#  Подписи
+# ---------------------------------------------------------------------
+def add_caption_above(doc, caption, align=None):
+    p = doc.add_paragraph()
+    p.alignment = align if align is not None else WD_ALIGN_PARAGRAPH.LEFT
+    pf = p.paragraph_format
+    pf.first_line_indent = Cm(0)
+    pf.line_spacing = 1.0
+    pf.space_before = Pt(6)
+    pf.space_after = Pt(3)
+    run = p.add_run(caption)
+    set_run_font(run, size=14)
+    return p
+
+
+def add_caption_below(doc, caption, align=None):
+    p = doc.add_paragraph()
+    p.alignment = align if align is not None else WD_ALIGN_PARAGRAPH.CENTER
+    pf = p.paragraph_format
+    pf.first_line_indent = Cm(0)
+    pf.line_spacing = 1.0
+    pf.space_before = Pt(3)
+    pf.space_after = Pt(6)
+    run = p.add_run(caption)
+    set_run_font(run, size=14)
+    return p
+
+
+# ---------------------------------------------------------------------
+#  Листинг
+# ---------------------------------------------------------------------
+def add_code_block(doc, code, caption=None):
+    if caption:
+        add_caption_above(doc, caption)
+
+    for line in code.split("\n"):
+        p = _safe_paragraph(doc, "Listing")
+        pf = p.paragraph_format
+        pf.first_line_indent = Cm(0)
+        pf.line_spacing = 1.0
+        run = p.add_run(line if line else " ")
+        set_run_font(run, name="Courier New", size=11)
+
+    tail = doc.add_paragraph()
+    tail.paragraph_format.first_line_indent = Cm(0)
+    tail.paragraph_format.line_spacing = 1.0
+    tail.paragraph_format.space_after = Pt(0)
+
+
+# ---------------------------------------------------------------------
+#  Рисунок
+# ---------------------------------------------------------------------
+def add_image(doc, path, caption=""):
+    path = Path(path)
+    if not path.exists():
+        print("[WARN] Изображение не найдено: {0}".format(path))
+        # Всё равно выводим подпись, чтобы номер не терялся.
+        if caption:
+            add_caption_below(doc, caption)
+        return
+
+    width_cm = 15.0
+    if _HAS_PIL:
+        try:
+            with Image.open(path) as im:
+                w, h = im.size
+                dpi = im.info.get("dpi", (96, 96))[0] or 96
+                native_cm = w / dpi * 2.54
+                width_cm = min(native_cm, 16.0)
+        except Exception:
+            pass
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.first_line_indent = Cm(0)
+    p.paragraph_format.line_spacing = 1.0
+    p.paragraph_format.space_before = Pt(6)
+    run = p.add_run()
+    run.add_picture(str(path), width=Cm(width_cm))
+
+    if caption:
+        add_caption_below(doc, caption)
+
+
+# ---------------------------------------------------------------------
+#  Таблица
+# ---------------------------------------------------------------------
+_SEP = re.compile(r"^:?-+:?$")
+
+
+def _parse_table_row(line):
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def add_table(doc, table_lines, caption=None):
+    if caption:
+        add_caption_above(doc, caption)
+
+    rows = [_parse_table_row(l) for l in table_lines]
+    if not rows:
+        return
+
+    header = rows[0]
+    data = []
+    for r in rows[1:]:
+        if r and all(_SEP.match(c) for c in r if c):
+            continue
+        data.append(r)
+
+    n_cols = len(header)
+    fs = 12 if len(data) > 5 else 14
+
+    table = doc.add_table(rows=1 + len(data), cols=n_cols)
+    try:
+        table.style = "Table Grid"
+    except KeyError:
+        pass
+    table.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    for j, txt in enumerate(header):
+        cell = table.rows[0].cells[j]
+        cell.text = ""
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.first_line_indent = Cm(0)
+        p.paragraph_format.line_spacing = 1.0
+        run = p.add_run(txt)
+        set_run_font(run, size=fs, bold=True)
+
+    for i, row in enumerate(data):
+        for j in range(n_cols):
+            txt = row[j] if j < len(row) else ""
+            cell = table.rows[i + 1].cells[j]
+            cell.text = ""
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.first_line_indent = Cm(0)
+            p.paragraph_format.line_spacing = 1.0
+            run = p.add_run(txt)
+            set_run_font(run, size=fs)
+
+    tail = doc.add_paragraph()
+    tail.paragraph_format.first_line_indent = Cm(0)
+    tail.paragraph_format.line_spacing = 1.0
+    tail.paragraph_format.space_after = Pt(0)
+
+
+# ---------------------------------------------------------------------
+#  Формула
+# ---------------------------------------------------------------------
+def add_formula(doc, formula):
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.first_line_indent = Cm(0)
+    p.paragraph_format.line_spacing = 1.0
+    p.paragraph_format.space_before = Pt(6)
+    p.paragraph_format.space_after = Pt(6)
+    add_inline(p, formula)

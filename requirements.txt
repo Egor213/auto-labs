@@ -1,0 +1,4 @@
+python-docx>=0.8.11
+PyYAML>=6.0
+pillow>=9.0
+docxtpl>=0.16.7
